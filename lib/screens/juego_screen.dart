@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/categoria.dart';
 import '../models/palabra.dart';
 import '../database/quien_soy_db.dart';
@@ -23,7 +24,7 @@ class JuegoScreen extends StatefulWidget {
 }
 
 class _JuegoScreenState extends State<JuegoScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   List<Palabra> _todasLasPalabras = [];
   List<Palabra> _palabrasRestantes = [];
   Palabra? _palabraActual;
@@ -31,13 +32,15 @@ class _JuegoScreenState extends State<JuegoScreen>
   int _segundosRestantes = 0;
   bool _juegoIniciado = false;
   bool _juegoTerminado = false;
-  bool _bloqueoAccion = false; // Bloquea acciones mientras se actualiza palabra
+  bool _bloqueoAccion = false;
+  bool _juegoPausado = false;
 
   final SensorService _sensorService = SensorService();
   Timer? _timer;
 
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
+  late AnimationController _fondoController;
 
   @override
   void initState() {
@@ -55,6 +58,10 @@ class _JuegoScreenState extends State<JuegoScreen>
     _scaleAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
+
+    _fondoController =
+        AnimationController(vsync: this, duration: const Duration(seconds: 3))
+          ..repeat(reverse: true);
   }
 
   Future<void> _cargarPalabras() async {
@@ -63,38 +70,94 @@ class _JuegoScreenState extends State<JuegoScreen>
           await QuienSoyDB.obtenerPalabrasPorCategoria(widget.categoria.id);
       setState(() {
         _todasLasPalabras = data.map((map) => Palabra.fromMap(map)).toList();
-        _palabrasRestantes = List.from(_todasLasPalabras);
-        _palabrasRestantes.shuffle(Random());
+        _palabrasRestantes = List.from(_todasLasPalabras)..shuffle(Random());
       });
     } catch (e) {
       debugPrint("Error cargando palabras: $e");
     }
   }
 
-  void _iniciarJuego() {
+  Future<void> _iniciarJuego() async {
     if (_palabrasRestantes.isEmpty) {
       _mostrarDialogoSinPalabras();
       return;
     }
+
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
 
     setState(() {
       _juegoIniciado = true;
       _palabraActual = _palabrasRestantes.first;
     });
 
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() => _segundosRestantes--);
-      if (_segundosRestantes <= 0) _terminarJuego();
-    });
+    _iniciarTemporizador();
 
+    // Activamos sensor: pantalla hacia arriba = acierto, hacia abajo = pasar
     _sensorService.iniciar(
       onTiltUp: _manejarAcierto,
       onTiltDown: _manejarPasar,
     );
   }
 
+  void _iniciarTemporizador() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!_juegoPausado) {
+        setState(() => _segundosRestantes--);
+        if (_segundosRestantes <= 0) _terminarJuego();
+      }
+    });
+  }
+
+  void _pausarJuego() {
+    setState(() => _juegoPausado = true);
+    _sensorService.detener();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.white,
+        title: const Text(
+          "Juego en pausa",
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: const Text("¿Qué querés hacer?"),
+        actions: [
+          TextButton.icon(
+            icon: const Icon(Icons.play_arrow, color: Colors.green),
+            label: const Text("Reanudar"),
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() => _juegoPausado = false);
+              _sensorService.iniciar(
+                onTiltUp: _manejarAcierto,
+                onTiltDown: _manejarPasar,
+              );
+            },
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.menu, color: Colors.orange),
+            label: const Text("Volver al menú"),
+            onPressed: () async {
+              await SystemChrome.setPreferredOrientations([
+                DeviceOrientation.portraitUp,
+                DeviceOrientation.portraitDown,
+              ]);
+              if (mounted) Navigator.pop(context); // cierra modal
+              if (mounted) Navigator.pop(context); // vuelve al menú
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   void _manejarAcierto() {
-    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion) return;
+    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion || _juegoPausado)
+      return;
     _bloqueoAccion = true;
 
     AudioService.reproducirAcierto();
@@ -110,7 +173,8 @@ class _JuegoScreenState extends State<JuegoScreen>
   }
 
   void _manejarPasar() {
-    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion) return;
+    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion || _juegoPausado)
+      return;
     _bloqueoAccion = true;
 
     AudioService.reproducirPasar();
@@ -133,12 +197,17 @@ class _JuegoScreenState extends State<JuegoScreen>
     setState(() => _palabraActual = _palabrasRestantes.first);
   }
 
-  void _terminarJuego() {
+  Future<void> _terminarJuego() async {
     _timer?.cancel();
     _sensorService.detener();
     AudioService.reproducirTiempoAgotado();
 
     setState(() => _juegoTerminado = true);
+
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
 
     Future.delayed(const Duration(milliseconds: 500), () {
       Navigator.pushReplacement(
@@ -174,9 +243,16 @@ class _JuegoScreenState extends State<JuegoScreen>
 
   @override
   void dispose() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _timer?.cancel();
     _sensorService.dispose();
     _animationController.dispose();
+    _fondoController.dispose();
     AudioService.dispose();
     super.dispose();
   }
@@ -184,25 +260,34 @@ class _JuegoScreenState extends State<JuegoScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              widget.categoria.color.withOpacity(0.7),
-              widget.categoria.color,
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child:
-              _juegoIniciado ? _buildPantallaJuego() : _buildPantallaInicio(),
-        ),
+      body: AnimatedBuilder(
+        animation: _fondoController,
+        builder: (context, child) {
+          final color1 = widget.categoria.color
+              .withOpacity(0.7 + 0.1 * sin(_fondoController.value * pi));
+          final color2 = widget.categoria.color
+              .withOpacity(1.0 - 0.1 * sin(_fondoController.value * pi));
+
+          return Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [color1, color2],
+              ),
+            ),
+            child: SafeArea(
+              child: _juegoIniciado
+                  ? _buildPantallaJuego()
+                  : _buildPantallaInicio(),
+            ),
+          );
+        },
       ),
     );
   }
 
+  // ------------------- PANTALLA INICIO -------------------
   Widget _buildPantallaInicio() {
     return Center(
       child: Column(
@@ -233,11 +318,11 @@ class _JuegoScreenState extends State<JuegoScreen>
                       fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 10),
-                const Text("📱 Coloca el teléfono en tu frente",
+                const Text("📱 Colocá el teléfono en tu frente",
                     style: TextStyle(color: Colors.white, fontSize: 16)),
-                const Text("⬆️ Inclina arriba si aciertas",
+                const Text("⬆️ Pantalla hacia arriba = Acierto",
                     style: TextStyle(color: Colors.white, fontSize: 16)),
-                const Text("⬇️ Inclina abajo para pasar",
+                const Text("⬇️ Pantalla hacia abajo = Pasar",
                     style: TextStyle(color: Colors.white, fontSize: 16)),
               ],
             ),
@@ -263,116 +348,131 @@ class _JuegoScreenState extends State<JuegoScreen>
     );
   }
 
+  // ------------------- PANTALLA JUEGO -------------------
   Widget _buildPantallaJuego() {
-    return Column(
+    return Stack(
       children: [
-        // Barra superior con temporizador y puntaje
-        Padding(
-          padding: const EdgeInsets.all(20),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildIndicador(
+                            Icons.timer, _segundosRestantes.toString()),
+                        _buildIndicador(Icons.star, _puntaje.toString()),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child: Center(
+                      child: ScaleTransition(
+                        scale: _scaleAnimation,
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 20),
+                          padding: const EdgeInsets.all(30),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black26,
+                                blurRadius: 10,
+                                offset: Offset(0, 5),
+                              ),
+                            ],
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              _palabraActual?.texto ?? "...",
+                              style: TextStyle(
+                                fontSize: 36,
+                                fontWeight: FontWeight.bold,
+                                color: widget.categoria.color,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: const [
+                        Column(
+                          children: [
+                            Icon(Icons.arrow_upward,
+                                size: 50, color: Colors.white70),
+                            Text("Acierto",
+                                style: TextStyle(color: Colors.white70)),
+                          ],
+                        ),
+                        Column(
+                          children: [
+                            Icon(Icons.arrow_downward,
+                                size: 50, color: Colors.white70),
+                            Text("Pasar",
+                                style: TextStyle(color: Colors.white70)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        Positioned(
+          top: 20,
+          right: 20,
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Temporizador
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.timer, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Text(
-                      "$_segundosRestantes",
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Puntaje
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.star, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Text(
-                      "$_puntaje",
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const Spacer(),
-        // Palabra actual
-        ScaleTransition(
-          scale: _scaleAnimation,
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 40),
-            padding: const EdgeInsets.all(40),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black26,
-                  blurRadius: 10,
-                  offset: Offset(0, 5),
-                ),
-              ],
-            ),
-            child: Text(
-              _palabraActual?.texto ?? "...",
-              style: TextStyle(
-                fontSize: 36,
-                fontWeight: FontWeight.bold,
-                color: widget.categoria.color,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ),
-        const Spacer(),
-        // Indicadores visuales de movimiento
-        Padding(
-          padding: const EdgeInsets.all(20),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: const [
-              Column(
-                children: [
-                  Icon(Icons.arrow_upward, size: 50, color: Colors.white70),
-                  Text("Acierto", style: TextStyle(color: Colors.white70)),
-                ],
-              ),
-              Column(
-                children: [
-                  Icon(Icons.arrow_downward, size: 50, color: Colors.white70),
-                  Text("Pasar", style: TextStyle(color: Colors.white70)),
-                ],
+              IconButton(
+                icon: const Icon(Icons.pause_circle_filled,
+                    color: Colors.white, size: 40),
+                onPressed: _pausarJuego,
+                tooltip: "Pausar juego",
               ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildIndicador(IconData icono, String valor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Icon(icono, color: Colors.white),
+          const SizedBox(width: 8),
+          Text(
+            valor,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,70 +1,69 @@
+// sensor_service.dart
 import 'dart:async';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:flutter/foundation.dart';
 
-/// Servicio para detectar movimientos del dispositivo
-/// Detecta inclinación hacia arriba (acierto) o hacia abajo (pasar)
+/// Servicio para detectar inclinación del dispositivo usando el acelerómetro.
+/// Detecta:
+/// - Boca arriba  -> onTiltUp (acierto)
+/// - Boca abajo   -> onTiltDown (pasar)
 class SensorService {
-  StreamSubscription? _accelerometerSubscription;
+  StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
 
-  // Callbacks para eventos
+  // Callbacks
   Function()? onTiltUp;
   Function()? onTiltDown;
 
-  // Umbrales de detección (ajustables según sensibilidad deseada)
-  final double umbralArriba = 8.0; // Inclinación hacia arriba
-  final double umbralAbajo = -8.0; // Inclinación hacia abajo
+  // Umbral (ajustable)
+  final double threshold = 7.0;
 
-  // Control de cooldown para evitar detecciones múltiples
+  // Cooldown para evitar múltiples triggers
   DateTime? _ultimaDeteccion;
-  final Duration cooldownDuration = Duration(milliseconds: 800);
+  final Duration cooldownDuration = const Duration(milliseconds: 900);
 
   bool _estaActivo = false;
 
-  /// Inicia la escucha de eventos del acelerómetro
-  void iniciar({required Function() onTiltUp, required Function() onTiltDown}) {
+  /// Inicia la escucha del acelerómetro
+  void iniciar({
+    required Function() onTiltUp,
+    required Function() onTiltDown,
+  }) {
     if (_estaActivo) return;
 
     this.onTiltUp = onTiltUp;
     this.onTiltDown = onTiltDown;
     _estaActivo = true;
 
-    // Escuchar eventos del acelerómetro
-    _accelerometerSubscription = accelerometerEventStream().listen(
-      (AccelerometerEvent event) {
-        _procesarEvento(event);
-      },
-      onError: (error) {
-        print("Error en acelerómetro: $error");
-      },
+    _accelerometerSubscription = accelerometerEvents.listen(
+      (AccelerometerEvent event) => _procesarEvento(event),
+      onError: (e) => debugPrint('Error en acelerómetro: $e'),
     );
   }
 
-  /// Procesa los eventos del acelerómetro
   void _procesarEvento(AccelerometerEvent event) {
-    // Verificar cooldown
-    if (_ultimaDeteccion != null) {
-      final diferencia = DateTime.now().difference(_ultimaDeteccion!);
-      if (diferencia < cooldownDuration) {
-        return; // Aún en cooldown
-      }
+    if (_ultimaDeteccion != null &&
+        DateTime.now().difference(_ultimaDeteccion!) < cooldownDuration) {
+      return;
     }
 
-    // event.y representa la inclinación vertical del dispositivo
-    // Valores positivos grandes: teléfono inclinado hacia arriba
-    // Valores negativos grandes: teléfono inclinado hacia abajo
+    final double z = event.z;
 
-    if (event.y > umbralArriba) {
-      // Inclinación hacia arriba - Acierto
+    // 🔄 Lógica invertida para tu dispositivo
+    if (z > threshold) {
+      // Boca arriba -> ACIERTO
       _ultimaDeteccion = DateTime.now();
       onTiltUp?.call();
-    } else if (event.y < umbralAbajo) {
-      // Inclinación hacia abajo - Pasar
+      return;
+    }
+
+    if (z < -threshold) {
+      // Boca abajo -> PASAR
       _ultimaDeteccion = DateTime.now();
       onTiltDown?.call();
+      return;
     }
   }
 
-  /// Detiene la escucha del acelerómetro
   void detener() {
     _accelerometerSubscription?.cancel();
     _accelerometerSubscription = null;
@@ -72,8 +71,5 @@ class SensorService {
     _ultimaDeteccion = null;
   }
 
-  /// Limpia recursos
-  void dispose() {
-    detener();
-  }
+  void dispose() => detener();
 }

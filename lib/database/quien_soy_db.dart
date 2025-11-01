@@ -79,26 +79,15 @@ class QuienSoyDB {
 
         // Insertar palabras de ejemplo - ANIMALES
         List<String> animales = [
-          "Elefante",
-          "León",
-          "Tigre",
-          "Jirafa",
-          "Cebra",
-          "Pingüino",
-          "Delfín",
-          "Ballena",
-          "Tiburón",
-          "Águila",
-          "Colibrí",
-          "Panda",
-          "Koala",
-          "Canguro",
-          "Oso",
-          "Lobo",
+          "Mulita",
+          "Guanaco",
+          "Llama",
           "Zorro",
-          "Conejo",
-          "Tortuga",
-          "Serpiente",
+          "Gallina",
+          "Tapir",
+          "Oso hormiguero",
+          "Corzuela",
+          "Mataco",
         ];
         for (var animal in animales) {
           await db.insert("palabras", {"texto": animal, "categoria_id": 1});
