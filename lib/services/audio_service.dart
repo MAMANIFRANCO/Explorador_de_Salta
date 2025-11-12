@@ -1,44 +1,79 @@
 import 'package:audioplayers/audioplayers.dart';
-import 'package:vibration/vibration.dart';
+import 'package:flutter_vibrate/flutter_vibrate.dart';
 import 'package:flutter/foundation.dart';
 
-/// Servicio para reproducir sonidos y vibraciones
 class AudioService {
-  static final AudioPlayer _player = AudioPlayer();
+  static AudioPlayer? _player;
+  static bool _initialized = false;
 
-  /// Reproduce un sonido y vibra
-  static Future<void> _reproducir(String asset, int duracionVibracion) async {
+  static Future<void> init() async {
+    if (_initialized && _player != null) return;
+
+    _player = AudioPlayer();
+    await _player!.setReleaseMode(ReleaseMode.stop);
+
+    await _player!.setAudioContext(AudioContext(
+      android: const AudioContextAndroid(
+        contentType: AndroidContentType.music,
+        usageType: AndroidUsageType.game,
+        audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+        isSpeakerphoneOn: true,
+      ),
+      iOS: AudioContextIOS(
+        category: AVAudioSessionCategory.playback,
+        options: {AVAudioSessionOptions.mixWithOthers},
+      ),
+    ));
+
+    _initialized = true;
+  }
+
+  static Future<void> _play(String asset, {bool success = true}) async {
     try {
-      await _player.stop(); // Detener cualquier reproducción en curso
-      await _player.play(AssetSource(asset));
-      await vibrar(duracion: duracionVibracion);
+      await init();
+      await _player!.stop();
+      // ✅ se usa directamente el nombre del archivo, no la lista
+      await _player!.play(AssetSource(asset.replaceFirst('assets/', '')));
+      await vibrar(success: success);
     } catch (e) {
-      debugPrint("Error reproduciendo $asset: $e");
+      debugPrint("Error al reproducir $asset: $e");
     }
   }
 
-  static Future<void> reproducirAcierto() =>
-      _reproducir('sounds/success.mp3', 100);
+  static Future<void> reproducirInicio() async =>
+      _play('assets/sounds/inicio.mp3', success: true);
 
-  static Future<void> reproducirPasar() => _reproducir('sounds/fail.wav', 50);
+  static Future<void> reproducirAcierto() async =>
+      _play('assets/sounds/success.mp3', success: true);
 
-  static Future<void> reproducirTiempoAgotado() =>
-      _reproducir('sounds/fail.wav', 500);
+  static Future<void> reproducirPasar() async =>
+      _play('assets/sounds/fail.wav', success: false);
 
-  /// Vibra el dispositivo
-  static Future<void> vibrar({int duracion = 100}) async {
+  static Future<void> reproducirTiempoAgotado() async =>
+      _play('assets/sounds/fail.wav', success: false);
+
+  static Future<void> vibrar({bool success = true}) async {
     try {
-      if (await Vibration.hasVibrator() == true) {
-        await Vibration.vibrate(duration: duracion);
+      if (await Vibrate.canVibrate) {
+        Vibrate.feedback(success ? FeedbackType.success : FeedbackType.error);
       }
     } catch (e) {
-      debugPrint("Error vibrando: $e");
+      debugPrint("Error al vibrar: $e");
     }
   }
 
-  /// Detiene la reproducción en curso
-  static Future<void> detener() async => await _player.stop();
+  static Future<void> detener() async {
+    try {
+      await _player?.stop();
+    } catch (_) {}
+  }
 
-  /// Libera recursos
-  static Future<void> dispose() async => await _player.dispose();
+  static Future<void> dispose() async {
+    try {
+      await _player?.stop();
+      await _player?.dispose();
+    } catch (_) {}
+    _player = null;
+    _initialized = false;
+  }
 }

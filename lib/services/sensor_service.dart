@@ -1,4 +1,3 @@
-// sensor_service.dart
 import 'dart:async';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -10,14 +9,14 @@ import 'package:flutter/foundation.dart';
 class SensorService {
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
 
-  // Callbacks
+  // Callbacks principales
   Function()? onTiltUp;
   Function()? onTiltDown;
 
   // Umbral (ajustable)
   final double threshold = 7.0;
 
-  // Cooldown para evitar múltiples triggers
+  // Cooldown para evitar múltiples triggers seguidos
   DateTime? _ultimaDeteccion;
   final Duration cooldownDuration = const Duration(milliseconds: 900);
 
@@ -41,6 +40,7 @@ class SensorService {
   }
 
   void _procesarEvento(AccelerometerEvent event) {
+    // Evita múltiples detecciones en un corto lapso
     if (_ultimaDeteccion != null &&
         DateTime.now().difference(_ultimaDeteccion!) < cooldownDuration) {
       return;
@@ -48,19 +48,12 @@ class SensorService {
 
     final double z = event.z;
 
-    // 🔄 Lógica invertida para tu dispositivo
     if (z > threshold) {
-      // Boca arriba -> ACIERTO
       _ultimaDeteccion = DateTime.now();
-      onTiltUp?.call();
-      return;
-    }
-
-    if (z < -threshold) {
-      // Boca abajo -> PASAR
+      onTiltUp?.call(); // Boca arriba -> acierto
+    } else if (z < -threshold) {
       _ultimaDeteccion = DateTime.now();
-      onTiltDown?.call();
-      return;
+      onTiltDown?.call(); // Boca abajo -> pasar
     }
   }
 

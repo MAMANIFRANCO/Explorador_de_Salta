@@ -1,29 +1,36 @@
-/// Modelo que representa una palabra o personaje del juego
 class Palabra {
   final int id;
   final String texto;
   final int categoriaId;
-  bool acertada; // Para tracking durante el juego
+  final String? imagenUrl; // ✅ <-- nuevo campo
+  bool acertada;
 
   Palabra({
     required this.id,
     required this.texto,
     required this.categoriaId,
+    this.imagenUrl,
     this.acertada = false,
   });
 
-  /// Crea una Palabra desde un Map de la base de datos
+  /// Crea una instancia de Palabra desde un mapa (registro SQLite)
   factory Palabra.fromMap(Map<String, dynamic> map) {
     return Palabra(
       id: map['id'] as int,
       texto: map['texto'] as String,
       categoriaId: map['categoria_id'] as int,
+      imagenUrl: map['imagen_url'] as String?, // ✅ <-- lee imagen desde DB
     );
   }
 
-  /// Convierte la Palabra a un Map para la base de datos
+  /// Convierte el objeto a mapa para guardar en la DB
   Map<String, dynamic> toMap() {
-    return {'id': id, 'texto': texto, 'categoria_id': categoriaId};
+    return {
+      'id': id,
+      'texto': texto,
+      'categoria_id': categoriaId,
+      'imagen_url': imagenUrl,
+    };
   }
 
   /// Marca la palabra como acertada

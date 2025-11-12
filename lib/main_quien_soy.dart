@@ -8,14 +8,14 @@ void main() async {
   // Asegurar que los bindings estén inicializados
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Configurar orientación (solo vertical)
+  // Configurar orientación inicial (solo vertical para pantallas de inicio/menú)
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
 
   // IMPORTANTE: Descomentar solo en desarrollo si necesitas recrear la DB
-  // await QuienSoyDB.borrarBase();
+  await QuienSoyDB.borrarBase();
 
   // Inicializar base de datos
   await QuienSoyDB.database;
@@ -23,6 +23,7 @@ void main() async {
   // Debug: imprimir categorías y palabras disponibles
   await QuienSoyDB.imprimirTodo();
 
+  // Ejecutar la app
   runApp(const QuienSoyApp());
 }
 

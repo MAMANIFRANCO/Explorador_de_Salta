@@ -11,34 +11,40 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Base de datos
+  # Base de datos local
   sqflite: ^2.3.3
   sqflite_common_ffi: ^2.3.0
   path: ^1.9.0
 
-  # Sensores para detectar movimientos
-  sensors_plus: ^7.0.0  # versión más reciente compatible con Dart 3
+  # Sensores (para detectar inclinación)
+  sensors_plus: ^7.0.0
 
-  # Vibración del dispositivo
-  vibration: ^3.1.4  # ya compatible con null safety
+  # Vibración háptica moderna
+  flutter_vibrate: ^1.3.0
+
+  # Evita que la pantalla se apague durante el juego
+  wakelock_plus: ^1.2.5
 
   # Reproducción de sonidos
-  audioplayers: ^6.5.1  # versión más reciente
+  audioplayers: ^6.0.0
 
-  # Preferencias locales
+  # Almacenamiento local de preferencias
   shared_preferences: ^2.2.2
 
+  # Iconos de iOS
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0  # la versión más reciente de lints
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
 
-  # Agregar assets para sonidos
   assets:
+    - assets/sounds/inicio.mp3
     - assets/sounds/success.mp3
     - assets/sounds/fail.wav
+    - assets/images/animales/
+    - assets/images/futbol/

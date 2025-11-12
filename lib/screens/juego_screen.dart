@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+
 import '../models/categoria.dart';
 import '../models/palabra.dart';
 import '../database/quien_soy_db.dart';
@@ -24,44 +26,76 @@ class JuegoScreen extends StatefulWidget {
 }
 
 class _JuegoScreenState extends State<JuegoScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  // Datos
   List<Palabra> _todasLasPalabras = [];
   List<Palabra> _palabrasRestantes = [];
   Palabra? _palabraActual;
+
+  // Estado
   int _puntaje = 0;
   int _segundosRestantes = 0;
   bool _juegoIniciado = false;
   bool _juegoTerminado = false;
   bool _bloqueoAccion = false;
   bool _juegoPausado = false;
+  bool _mostrandoCuentaRegresiva = false;
+  int _contador = 3;
 
+  // Servicios y timers
   final SensorService _sensorService = SensorService();
   Timer? _timer;
 
-  late AnimationController _animationController;
-  late Animation<double> _scaleAnimation;
-  late AnimationController _fondoController;
+  // Overlay acierto/pasar
+  late AnimationController _overlayController;
+  late Animation<double> _overlayOpacity;
+  Color _colorOverlay = Colors.transparent;
+
+  // Paleta
+  final Color _fondoOscuro = const Color(0xFF0F0C29); // azul marino profundo
+  final Color _fondoOscuro2 = const Color(0xFF1C1F2E); // tono compañero
+  final Color _bordeAcento = const Color(0xFF00F5FF); // azul eléctrico
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
     _segundosRestantes = widget.tiempoSegundos;
-    _inicializarAnimaciones();
+
+    // Audio listo
+    unawaited(AudioService.init());
+
+    _initAnimaciones();
     _cargarPalabras();
+
+    // Mantener pantalla encendida
+    WakelockPlus.enable();
+
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
   }
 
-  void _inicializarAnimaciones() {
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    );
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Refuerzo para que no se apague la pantalla
+    if (state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      WakelockPlus.enable();
+    }
+  }
 
-    _fondoController =
-        AnimationController(vsync: this, duration: const Duration(seconds: 3))
-          ..repeat(reverse: true);
+  void _initAnimaciones() {
+    _overlayController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _overlayOpacity = Tween<double>(begin: 0, end: 0.7).animate(
+      CurvedAnimation(parent: _overlayController, curve: Curves.easeOut),
+    );
   }
 
   Future<void> _cargarPalabras() async {
@@ -83,19 +117,37 @@ class _JuegoScreenState extends State<JuegoScreen>
       return;
     }
 
-    await SystemChrome.setPreferredOrientations([
+    setState(() {
+      _mostrandoCuentaRegresiva = true;
+      _contador = 3;
+    });
+
+    await AudioService.reproducirInicio();
+
+    for (int i = 3; i > 0; i--) {
+      setState(() => _contador = i);
+      await Future.delayed(const Duration(seconds: 1));
+    }
+
+    setState(() => _contador = 0);
+    await Future.delayed(const Duration(milliseconds: 400));
+
+    await SystemChrome.setPreferredOrientations(const [
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
 
+    // En algunos dispositivos el cambio de orientación desactiva wakelock:
+    unawaited(WakelockPlus.enable());
+
     setState(() {
+      _mostrandoCuentaRegresiva = false;
       _juegoIniciado = true;
       _palabraActual = _palabrasRestantes.first;
     });
 
     _iniciarTemporizador();
 
-    // Activamos sensor: pantalla hacia arriba = acierto, hacia abajo = pasar
     _sensorService.iniciar(
       onTiltUp: _manejarAcierto,
       onTiltDown: _manejarPasar,
@@ -103,7 +155,8 @@ class _JuegoScreenState extends State<JuegoScreen>
   }
 
   void _iniciarTemporizador() {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      await WakelockPlus.enable(); // refuerzo constante
       if (!_juegoPausado) {
         setState(() => _segundosRestantes--);
         if (_segundosRestantes <= 0) _terminarJuego();
@@ -120,10 +173,8 @@ class _JuegoScreenState extends State<JuegoScreen>
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         backgroundColor: Colors.white,
-        title: const Text(
-          "Juego en pausa",
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: const Text("Juego en pausa",
+            style: TextStyle(fontWeight: FontWeight.bold)),
         content: const Text("¿Qué querés hacer?"),
         actions: [
           TextButton.icon(
@@ -142,12 +193,12 @@ class _JuegoScreenState extends State<JuegoScreen>
             icon: const Icon(Icons.menu, color: Colors.orange),
             label: const Text("Volver al menú"),
             onPressed: () async {
-              await SystemChrome.setPreferredOrientations([
+              await SystemChrome.setPreferredOrientations(const [
                 DeviceOrientation.portraitUp,
                 DeviceOrientation.portraitDown,
               ]);
-              if (mounted) Navigator.pop(context); // cierra modal
-              if (mounted) Navigator.pop(context); // vuelve al menú
+              if (mounted) Navigator.pop(context);
+              if (mounted) Navigator.pop(context);
             },
           ),
         ],
@@ -155,38 +206,46 @@ class _JuegoScreenState extends State<JuegoScreen>
     );
   }
 
-  void _manejarAcierto() {
-    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion || _juegoPausado)
+  Future<void> _mostrarOverlay(Color color) async {
+    setState(() => _colorOverlay = color);
+    await _overlayController.forward(from: 0);
+    await Future.delayed(const Duration(milliseconds: 200));
+    await _overlayController.reverse();
+  }
+
+  void _manejarAcierto() async {
+    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion || _juegoPausado) {
       return;
+    }
     _bloqueoAccion = true;
 
-    AudioService.reproducirAcierto();
+    await AudioService.reproducirAcierto();
+    await _mostrarOverlay(Colors.greenAccent.shade700);
+
     setState(() {
       _palabraActual?.marcarAcertada();
       _puntaje++;
       _palabrasRestantes.removeAt(0);
     });
 
-    _animarCambio();
+    await Future.delayed(const Duration(milliseconds: 350));
     _siguientePalabra();
     _bloqueoAccion = false;
   }
 
-  void _manejarPasar() {
-    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion || _juegoPausado)
+  void _manejarPasar() async {
+    if (!_juegoIniciado || _juegoTerminado || _bloqueoAccion || _juegoPausado) {
       return;
+    }
     _bloqueoAccion = true;
 
-    AudioService.reproducirPasar();
-    setState(() => _palabrasRestantes.removeAt(0));
+    await AudioService.reproducirPasar();
+    await _mostrarOverlay(Colors.redAccent.shade700);
 
-    _animarCambio();
+    setState(() => _palabrasRestantes.removeAt(0));
+    await Future.delayed(const Duration(milliseconds: 350));
     _siguientePalabra();
     _bloqueoAccion = false;
-  }
-
-  void _animarCambio() {
-    _animationController.forward().then((_) => _animationController.reverse());
   }
 
   void _siguientePalabra() {
@@ -200,16 +259,19 @@ class _JuegoScreenState extends State<JuegoScreen>
   Future<void> _terminarJuego() async {
     _timer?.cancel();
     _sensorService.detener();
-    AudioService.reproducirTiempoAgotado();
+    await AudioService.reproducirTiempoAgotado();
+
+    await WakelockPlus.disable();
 
     setState(() => _juegoTerminado = true);
 
-    await SystemChrome.setPreferredOrientations([
+    await SystemChrome.setPreferredOrientations(const [
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
     ]);
 
-    Future.delayed(const Duration(milliseconds: 500), () {
+    if (!mounted) return;
+    Future.delayed(const Duration(milliseconds: 400), () {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -225,6 +287,354 @@ class _JuegoScreenState extends State<JuegoScreen>
     });
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    _sensorService.dispose();
+    _overlayController.dispose();
+    WakelockPlus.disable();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          if (_juegoIniciado) _buildPantallaJuego() else _buildPantallaInicio(),
+          if (_mostrandoCuentaRegresiva) _buildCuentaRegresiva(),
+        ],
+      ),
+    );
+  }
+
+  // ---------- INICIO ----------
+  Widget _buildPantallaInicio() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_fondoOscuro, _fondoOscuro2],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(widget.categoria.icono, style: const TextStyle(fontSize: 100)),
+            const SizedBox(height: 20),
+            Text(
+              widget.categoria.nombre,
+              style: const TextStyle(
+                fontSize: 36,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 40),
+            ElevatedButton(
+              onPressed: _iniciarJuego,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _fondoOscuro2,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+              ),
+              child: const Text('Comenzar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------- JUEGO ----------
+  Widget _buildPantallaJuego() {
+    return Stack(
+      children: [
+        // Fondo
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [_fondoOscuro, _fondoOscuro2],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        // Imagen palabra
+        Positioned.fill(child: _buildBackground()),
+
+        // Overlay animado
+        AnimatedBuilder(
+          animation: _overlayController,
+          builder: (context, _) => Container(
+              color: _colorOverlay.withOpacity(_overlayOpacity.value)),
+        ),
+
+        SafeArea(
+          child: Stack(
+            children: [
+              // Palabra centrada arriba
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 8),
+                  _buildHUDSuperior(),
+                  const SizedBox(height: 10),
+                  _buildPalabraSuperior(),
+                  const Spacer(),
+                ],
+              ),
+
+              // Reloj centrado abajo
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 25),
+                  child: _glassCapsule(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 30, vertical: 12),
+                    borderRadius: 25,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.timer_rounded, color: Colors.white70),
+                        const SizedBox(width: 8),
+                        Text(
+                          "$_segundosRestantes",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHUDSuperior() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Puntaje a la izquierda
+          _glassCapsule(
+            child: Row(
+              children: [
+                const Icon(Icons.star_rounded, color: Colors.white70),
+                const SizedBox(width: 8),
+                Text(
+                  "$_puntaje",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Botón pausa a la derecha
+          _glassIconButton(
+            icon: Icons.pause_rounded,
+            onTap: _pausarJuego,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHUD() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _glassCapsule(
+            child: Row(
+              children: [
+                const Icon(Icons.timer_rounded, color: Colors.white70),
+                const SizedBox(width: 8),
+                Text(
+                  "$_segundosRestantes",
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+          Row(
+            children: [
+              _glassCapsule(
+                child: Row(
+                  children: [
+                    const Icon(Icons.star_rounded, color: Colors.white70),
+                    const SizedBox(width: 8),
+                    Text(
+                      "$_puntaje",
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              _glassIconButton(
+                icon: Icons.pause_rounded,
+                onTap: _pausarJuego,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPalabraSuperior() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 350),
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: ScaleTransition(scale: anim, child: child),
+        ),
+        child: _glassCapsule(
+          key: ValueKey(_palabraActual?.texto ?? "_"),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          borderRadius: 22,
+          child: Text(
+            _palabraActual?.texto ?? "...",
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 46,
+              fontWeight: FontWeight.w900,
+              shadows: [
+                Shadow(
+                    blurRadius: 8, color: Colors.black54, offset: Offset(0, 2))
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackground() {
+    final img = _palabraActual?.imagenUrl;
+    if (img == null || img.isEmpty) {
+      return Container(color: widget.categoria.color.withOpacity(0.25));
+    }
+    return Image.asset(
+      img,
+      fit: BoxFit.contain, // no deforma, deja laterales con gradiente
+      alignment: Alignment.center,
+      width: double.infinity,
+      height: double.infinity,
+      filterQuality: FilterQuality.high,
+    );
+  }
+
+  // ---------- Cuenta regresiva ----------
+  Widget _buildCuentaRegresiva() {
+    return Container(
+      color: Colors.black.withOpacity(0.7),
+      child: Center(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 500),
+          transitionBuilder: (child, anim) => ScaleTransition(
+            scale: CurvedAnimation(parent: anim, curve: Curves.elasticOut),
+            child: child,
+          ),
+          child: _contador > 0
+              ? Text(
+                  '$_contador',
+                  key: ValueKey<int>(_contador),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 150,
+                      fontWeight: FontWeight.bold),
+                )
+              : const Text(
+                  '¡YA!',
+                  key: ValueKey<String>('YA'),
+                  style: TextStyle(
+                      color: Colors.yellow,
+                      fontSize: 130,
+                      fontWeight: FontWeight.bold),
+                ),
+        ),
+      ),
+    );
+  }
+
+  // ---------- Helpers visuales ----------
+  Widget _glassCapsule({
+    Key? key,
+    required Widget child,
+    EdgeInsets padding =
+        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    double borderRadius = 16,
+  }) {
+    return ClipRRect(
+      key: key,
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: _fondoOscuro2.withOpacity(0.85),
+          borderRadius: BorderRadius.circular(borderRadius),
+          border: Border.all(color: _bordeAcento.withOpacity(0.8), width: 1.2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.35),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _glassIconButton({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: _fondoOscuro2.withOpacity(0.85),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _bordeAcento.withOpacity(0.8), width: 1.2),
+        ),
+        child: Icon(icon, color: Colors.white, size: 28),
+      ),
+    );
+  }
+
   void _mostrarDialogoSinPalabras() {
     showDialog(
       context: context,
@@ -235,241 +645,6 @@ class _JuegoScreenState extends State<JuegoScreen>
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text("Volver"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-    _timer?.cancel();
-    _sensorService.dispose();
-    _animationController.dispose();
-    _fondoController.dispose();
-    AudioService.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: AnimatedBuilder(
-        animation: _fondoController,
-        builder: (context, child) {
-          final color1 = widget.categoria.color
-              .withOpacity(0.7 + 0.1 * sin(_fondoController.value * pi));
-          final color2 = widget.categoria.color
-              .withOpacity(1.0 - 0.1 * sin(_fondoController.value * pi));
-
-          return Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [color1, color2],
-              ),
-            ),
-            child: SafeArea(
-              child: _juegoIniciado
-                  ? _buildPantallaJuego()
-                  : _buildPantallaInicio(),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // ------------------- PANTALLA INICIO -------------------
-  Widget _buildPantallaInicio() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(widget.categoria.icono, style: const TextStyle(fontSize: 100)),
-          const SizedBox(height: 20),
-          Text(
-            widget.categoria.nombre,
-            style: const TextStyle(
-                fontSize: 36, fontWeight: FontWeight.bold, color: Colors.white),
-          ),
-          const SizedBox(height: 40),
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 40),
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(15),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  "⏱️ Tiempo: $_segundosRestantes segundos",
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-                const Text("📱 Colocá el teléfono en tu frente",
-                    style: TextStyle(color: Colors.white, fontSize: 16)),
-                const Text("⬆️ Pantalla hacia arriba = Acierto",
-                    style: TextStyle(color: Colors.white, fontSize: 16)),
-                const Text("⬇️ Pantalla hacia abajo = Pasar",
-                    style: TextStyle(color: Colors.white, fontSize: 16)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 40),
-          ElevatedButton(
-            onPressed: _iniciarJuego,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: widget.categoria.color,
-              padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30),
-              ),
-            ),
-            child: const Text(
-              "COMENZAR",
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ------------------- PANTALLA JUEGO -------------------
-  Widget _buildPantallaJuego() {
-    return Stack(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildIndicador(
-                            Icons.timer, _segundosRestantes.toString()),
-                        _buildIndicador(Icons.star, _puntaje.toString()),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Expanded(
-                    child: Center(
-                      child: ScaleTransition(
-                        scale: _scaleAnimation,
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 20),
-                          padding: const EdgeInsets.all(30),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Colors.black26,
-                                blurRadius: 10,
-                                offset: Offset(0, 5),
-                              ),
-                            ],
-                          ),
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(
-                              _palabraActual?.texto ?? "...",
-                              style: TextStyle(
-                                fontSize: 36,
-                                fontWeight: FontWeight.bold,
-                                color: widget.categoria.color,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: const [
-                        Column(
-                          children: [
-                            Icon(Icons.arrow_upward,
-                                size: 50, color: Colors.white70),
-                            Text("Acierto",
-                                style: TextStyle(color: Colors.white70)),
-                          ],
-                        ),
-                        Column(
-                          children: [
-                            Icon(Icons.arrow_downward,
-                                size: 50, color: Colors.white70),
-                            Text("Pasar",
-                                style: TextStyle(color: Colors.white70)),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        Positioned(
-          top: 20,
-          right: 20,
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.pause_circle_filled,
-                    color: Colors.white, size: 40),
-                onPressed: _pausarJuego,
-                tooltip: "Pausar juego",
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIndicador(IconData icono, String valor) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          Icon(icono, color: Colors.white),
-          const SizedBox(width: 8),
-          Text(
-            valor,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
           ),
         ],
       ),

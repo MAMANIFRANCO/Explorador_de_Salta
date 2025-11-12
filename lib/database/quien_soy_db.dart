@@ -6,6 +6,7 @@ import 'package:path/path.dart';
 /// Maneja categorías y palabras/personajes
 class QuienSoyDB {
   static Database? _db;
+  static const int _version = 2;
 
   /// Obtiene la instancia de la base de datos
   static Future<Database> get database async {
@@ -28,181 +29,167 @@ class QuienSoyDB {
     String path = join(await getDatabasesPath(), "quien_soy.db");
     return await openDatabase(
       path,
-      version: 1,
+      version: _version,
       onCreate: (db, version) async {
-        // Tabla de categorías
-        await db.execute('''
-          CREATE TABLE categorias(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL UNIQUE,
-            icono TEXT NOT NULL,
-            color TEXT NOT NULL
-          )
-        ''');
-
-        // Tabla de palabras/personajes
-        await db.execute('''
-          CREATE TABLE palabras(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            texto TEXT NOT NULL,
-            categoria_id INTEGER NOT NULL,
-            FOREIGN KEY (categoria_id) REFERENCES categorias(id)
-          )
-        ''');
-
-        // Insertar categorías iniciales
-        await db.insert("categorias", {
-          "nombre": "Animales",
-          "icono": "🐾",
-          "color": "FF4CAF50", // Verde
-        });
-        await db.insert("categorias", {
-          "nombre": "Películas",
-          "icono": "🎬",
-          "color": "FF2196F3", // Azul
-        });
-        await db.insert("categorias", {
-          "nombre": "Famosos",
-          "icono": "⭐",
-          "color": "FFFF9800", // Naranja
-        });
-        await db.insert("categorias", {
-          "nombre": "Deportes",
-          "icono": "⚽",
-          "color": "FFF44336", // Rojo
-        });
-        await db.insert("categorias", {
-          "nombre": "Profesiones",
-          "icono": "💼",
-          "color": "FF9C27B0", // Púrpura
-        });
-
-        // Insertar palabras de ejemplo - ANIMALES
-        List<String> animales = [
-          "Mulita",
-          "Guanaco",
-          "Llama",
-          "Zorro",
-          "Gallina",
-          "Tapir",
-          "Oso hormiguero",
-          "Corzuela",
-          "Mataco",
-        ];
-        for (var animal in animales) {
-          await db.insert("palabras", {"texto": animal, "categoria_id": 1});
-        }
-
-        // PELÍCULAS
-        List<String> peliculas = [
-          "Titanic",
-          "Avatar",
-          "El Padrino",
-          "Inception",
-          "Matrix",
-          "Jurassic Park",
-          "Star Wars",
-          "Harry Potter",
-          "El Rey León",
-          "Frozen",
-          "Toy Story",
-          "Shrek",
-          "Los Avengers",
-          "Spider-Man",
-          "Batman",
-          "Superman",
-          "Gladiador",
-          "El Origen",
-          "Interestelar",
-          "Joker",
-        ];
-        for (var pelicula in peliculas) {
-          await db.insert("palabras", {"texto": pelicula, "categoria_id": 2});
-        }
-
-        // FAMOSOS
-        List<String> famosos = [
-          "Lionel Messi",
-          "Cristiano Ronaldo",
-          "Taylor Swift",
-          "Shakira",
-          "Leonardo DiCaprio",
-          "Jennifer Aniston",
-          "Will Smith",
-          "Rihanna",
-          "Beyoncé",
-          "Justin Bieber",
-          "Ariana Grande",
-          "Ed Sheeran",
-          "Elon Musk",
-          "Bill Gates",
-          "Steve Jobs",
-          "Albert Einstein",
-          "Pablo Picasso",
-          "Frida Kahlo",
-          "Diego Maradona",
-          "Michael Jackson",
-        ];
-        for (var famoso in famosos) {
-          await db.insert("palabras", {"texto": famoso, "categoria_id": 3});
-        }
-
-        // DEPORTES
-        List<String> deportes = [
-          "Fútbol",
-          "Básquetbol",
-          "Tenis",
-          "Voleibol",
-          "Natación",
-          "Atletismo",
-          "Ciclismo",
-          "Boxeo",
-          "Golf",
-          "Rugby",
-          "Hockey",
-          "Esquí",
-          "Snowboard",
-          "Surf",
-          "Patinaje",
-          "Gimnasia",
-          "Esgrima",
-          "Judo",
-          "Karate",
-          "Escalada",
-        ];
-        for (var deporte in deportes) {
-          await db.insert("palabras", {"texto": deporte, "categoria_id": 4});
-        }
-
-        // PROFESIONES
-        List<String> profesiones = [
-          "Médico",
-          "Profesor",
-          "Ingeniero",
-          "Abogado",
-          "Arquitecto",
-          "Chef",
-          "Piloto",
-          "Bombero",
-          "Policía",
-          "Dentista",
-          "Enfermero",
-          "Programador",
-          "Diseñador",
-          "Periodista",
-          "Fotógrafo",
-          "Músico",
-          "Actor",
-          "Escritor",
-          "Científico",
-          "Astronauta",
-        ];
-        for (var profesion in profesiones) {
-          await db.insert("palabras", {"texto": profesion, "categoria_id": 5});
-        }
+        await _crearTablas(db);
+        await _insertarDatosIniciales(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        print("Actualizando DB de versión $oldVersion a $newVersion");
+        await db.execute("DROP TABLE IF EXISTS palabras");
+        await db.execute("DROP TABLE IF EXISTS categorias");
+        await _crearTablas(db);
+        await _insertarDatosIniciales(db);
       },
     );
   }
+
+  /// Crea las tablas de la DB
+  static Future<void> _crearTablas(Database db) async {
+    await db.execute('''
+      CREATE TABLE categorias(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL UNIQUE,
+        icono TEXT NOT NULL,
+        color TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE palabras(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        texto TEXT NOT NULL,
+        categoria_id INTEGER NOT NULL,
+        imagen_url TEXT,
+        FOREIGN KEY (categoria_id) REFERENCES categorias(id)
+      )
+    ''');
+  }
+
+  /// Inserta datos iniciales en la DB
+  static Future<void> _insertarDatosIniciales(Database db) async {
+    // Categorías iniciales
+    List<Map<String, String>> categorias = [
+      {"nombre": "Animales", "icono": "🐾", "color": "FF4CAF50"},
+      {"nombre": "Películas", "icono": "🎬", "color": "FF2196F3"},
+      {"nombre": "Famosos", "icono": "⭐", "color": "FFFF9800"},
+      {"nombre": "Deportes", "icono": "⚽", "color": "FFF44336"},
+      {"nombre": "Profesiones", "icono": "💼", "color": "FF9C27B0"},
+    ];
+
+    for (var cat in categorias) {
+      await db.insert("categorias", cat);
+    }
+
+    // Palabras por categoría con imágenes
+    Map<int, List<Map<String, String>>> palabrasPorCategoria = {
+      1: [
+        {"texto": "Mulita", "imagenUrl": "assets/images/animales/mulita.jpeg"},
+        {
+          "texto": "Guanaco",
+          "imagenUrl": "assets/images/animales/guanaco.jpeg"
+        },
+        {"texto": "Llama", "imagenUrl": "assets/images/animales/llama.jpg"},
+        {
+          "texto": "Corzuela",
+          "imagenUrl": "assets/images/animales/corzuela.jpg"
+        },
+        {
+          "texto": "Tatú Carreta",
+          "imagenUrl": "assets/images/animales/tatuCarreta.jpg"
+        },
+        {"texto": "Alpaca", "imagenUrl": "assets/images/animales/alpaca.jpg"},
+        {
+          "texto": "Gato Montés",
+          "imagenUrl": "assets/images/animales/gato_montes.png"
+        },
+        {
+          "texto": "Pava de Monte",
+          "imagenUrl": "assets/images/animales/pava_de_monte.jpg"
+        },
+        {
+          "texto": "Vizcacha",
+          "imagenUrl": "assets/images/animales/Vizcacha.jpg"
+        },
+        {"texto": "Cuis", "imagenUrl": "assets/images/animales/Cuis.jpeg"},
+        {"texto": "Tapir", "imagenUrl": "assets/images/animales/Tapir.jpg"},
+        {
+          "texto": "Zorro de monte",
+          "imagenUrl": "assets/images/animales/zorro.jpg"
+        },
+        {
+          "texto": "Pecarí de Collar",
+          "imagenUrl": "assets/images/animales/Pecari.jpg"
+        },
+        {
+          "texto": "Yaguarete",
+          "imagenUrl": "assets/images/animales/yaguarete.jpg"
+        },
+        {"texto": "Coatí", "imagenUrl": "assets/images/animales/coati.jpg"},
+        {
+          "texto": "Condor Andino",
+          "imagenUrl": "assets/images/animales/Condor-Andino.png"
+        },
+      ],
+      2: [
+        {
+          "texto": "Titanic",
+          "imagenUrl": "assets/images/peliculas/titanic.png"
+        },
+        {"texto": "Avatar", "imagenUrl": "assets/images/peliculas/avatar.png"},
+        {
+          "texto": "El Padrino",
+          "imagenUrl": "assets/images/peliculas/padrino.png"
+        },
+        {
+          "texto": "Inception",
+          "imagenUrl": "assets/images/peliculas/inception.png"
+        },
+        {"texto": "Matrix", "imagenUrl": "assets/images/peliculas/matrix.png"},
+      ],
+
+      4: [
+        {
+          "texto": "Gimnasia y Tiro",
+          "imagenUrl": "assets/images/futbol/gyt.png"
+        },
+        {
+          "texto": "Juventud Antoniana",
+          "imagenUrl": "assets/images/futbol/cja.png"
+        },
+        {"texto": "Central Norte", "imagenUrl": "assets/images/futbol/cn.png"},
+        {"texto": "Atletico Mitre", "imagenUrl": "assets/images/futbol/am.png"},
+        {
+          "texto": "Club Atlético Social Boroquémica",
+          "imagenUrl": "assets/images/futbol/brq.png"
+        },
+        {
+          "texto": "Club Atlético Chicoana",
+          "imagenUrl": "assets/images/futbol/cha.png"
+        },
+        {
+          "texto": "Club Atlético Nobleza",
+          "imagenUrl": "assets/images/futbol/can.png"
+        },
+        {
+          "texto": "Club Atlético Sportivo El Carril",
+          "imagenUrl": "assets/images/futbol/casc.png"
+        },
+      ],
+      // Agregá aquí más categorías si querés
+    };
+
+    for (var catId in palabrasPorCategoria.keys) {
+      for (var palabra in palabrasPorCategoria[catId]!) {
+        await db.insert("palabras", {
+          "texto": palabra["texto"],
+          "categoria_id": catId,
+          // ✅ Usa imagenUrl si existe, o imagen como alternativa
+          "imagen_url": palabra["imagenUrl"] ?? palabra["imagen"],
+        });
+      }
+    }
+  } // <-- cierre del método
 
   /// Obtiene todas las categorías
   static Future<List<Map<String, dynamic>>> obtenerCategorias() async {
@@ -212,8 +199,7 @@ class QuienSoyDB {
 
   /// Obtiene todas las palabras de una categoría específica
   static Future<List<Map<String, dynamic>>> obtenerPalabrasPorCategoria(
-    int categoriaId,
-  ) async {
+      int categoriaId) async {
     final db = await database;
     return await db.query(
       "palabras",
@@ -224,24 +210,20 @@ class QuienSoyDB {
 
   /// Agrega una nueva categoría
   static Future<int> agregarCategoria(
-    String nombre,
-    String icono,
-    String color,
-  ) async {
+      String nombre, String icono, String color) async {
     final db = await database;
-    return await db.insert("categorias", {
-      "nombre": nombre,
-      "icono": icono,
-      "color": color,
-    });
+    return await db.insert(
+        "categorias", {"nombre": nombre, "icono": icono, "color": color});
   }
 
   /// Agrega una nueva palabra a una categoría
-  static Future<int> agregarPalabra(String texto, int categoriaId) async {
+  static Future<int> agregarPalabra(String texto, int categoriaId,
+      {String? imagenUrl}) async {
     final db = await database;
     return await db.insert("palabras", {
       "texto": texto,
       "categoria_id": categoriaId,
+      "imagen_url": imagenUrl,
     });
   }
 
@@ -252,7 +234,10 @@ class QuienSoyDB {
     for (var cat in categorias) {
       print("${cat['id']}: ${cat['nombre']} ${cat['icono']}");
       final palabras = await obtenerPalabrasPorCategoria(cat['id']);
-      print("  Palabras: ${palabras.length}");
+      print("  Palabras (${palabras.length}):");
+      for (var p in palabras) {
+        print("   - ${p['texto']} (${p['imagen_url']})");
+      }
     }
     print("======================");
   }
